@@ -46,9 +46,9 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-    <string>Yakındaki hizmetleri göstermek için konumuna ihtiyacımız var.</string>
+    <string>Yakınınızdaki hizmetleri göstermek için konumunuza ihtiyaç var.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Yakındaki hizmetleri göstermek için konumuna ihtiyacımız var.</string>
+    <string>Yakınınızdaki hizmetleri göstermek için konumunuza ihtiyaç var.</string>
 
 </dict>
 </plist>

@@ -88,7 +88,7 @@ class RootShell extends StatefulWidget {
 enum BottomItem { home, kesfet, cekGonder, nobetci, ayarlar }
 
 class _RootShellState extends State<RootShell> with SingleTickerProviderStateMixin {
-  // IndexedStack aktif sayfa index’i
+  // IndexedStack aktif sayfa
   int _stackIndex = 0;
 
   // --- Stack indexleri (sabit)
@@ -104,7 +104,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   static const int idxRehber = 9;
   static const int idxSearch = 10;
 
-  // WebView key’leri (hepsi arkaplanda canlı)
+  // WebView key’leri
   final _keyKesfet = GlobalKey<_WebTabState>();
   final _keyNobetci = GlobalKey<_WebTabState>();
   final _keyUlasim = GlobalKey<_WebTabState>();
@@ -144,7 +144,6 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     } catch (_) {}
   }
 
-  // Alt menüde hangi buton boyansın? (alt menüde olmayan sayfalarda null)
   BottomItem? _currentBottom() {
     switch (_stackIndex) {
       case idxHome:     return BottomItem.home;
@@ -160,7 +159,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     switch (item) {
       case BottomItem.home:      _stackIndex = idxHome; break;
       case BottomItem.kesfet:    _stackIndex = idxKesfet; break;
-      case BottomItem.cekGonder: _stackIndex = idxDummy; break; // WhatsApp açacağız
+      case BottomItem.cekGonder: _stackIndex = idxDummy; break; // WhatsApp dışa açılacak
       case BottomItem.nobetci:   _stackIndex = idxNobetci; break;
       case BottomItem.ayarlar:   _stackIndex = idxSettings; break;
     }
@@ -168,7 +167,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     _fadePulse();
   }
 
-  // Anasayfa kısayolları → ilgili hazır WebView’e git
+  // Anasayfa kısayolları → ilgili hazır WebView’e git (alt menüde seçim YOK)
   void _openShortcut(String url) {
     final u = Uri.tryParse(url);
     final path = (u?.path ?? '').toLowerCase();
@@ -194,7 +193,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     _fadePulse();
   }
 
-  // Arama → Search WebView’i önce yükle sonra göster (flicker yok)
+  // Arama → Search WebView’i önce yükle sonra göster
   Future<void> _openSearch(String query) async {
     final url = 'https://niksarmobil.tr/?s=$query';
     await _keySearch.currentState?.loadUrlAndWait(url);
@@ -229,7 +228,6 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
       body: Stack(
         children: [
           IndexedStack(index: _stackIndex, children: pages),
-          // yumuşak fade
           IgnorePointer(
             ignoring: true,
             child: FadeTransition(
@@ -244,7 +242,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
         onTap: (item) async {
           if (item == BottomItem.cekGonder) {
             await _openWhatsApp();
-            return; // sayfa değiştirme
+            return;
           }
           _selectBottom(item);
         },
@@ -253,7 +251,7 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
   }
 }
 
-/// Web sekmesi + geolocation polyfill (Mapbox “konumum” için)
+/// Web sekmesi + iOS için erken geolocation enjeksiyonu + sol kenardan geri kaydırma
 class WebTab extends StatefulWidget {
   final String initialUrl;
   const WebTab({super.key, required this.initialUrl});
@@ -266,8 +264,12 @@ class _WebTabState extends State<WebTab> with AutomaticKeepAliveClientMixin {
   int _progress = 0;
   Completer<void>? _navStarted;
 
-  // watchPosition abonelikleri
+  // geolocation watch abonelikleri
   final Map<String, StreamSubscription<Position>> _watchSubs = {};
+  bool _polyfillInjected = false;
+
+  // iOS sol kenar geri kaydırma (basit eşik)
+  double _dragDx = 0;
 
   Future<void> loadUrlAndWait(String url) {
     _navStarted ??= Completer<void>();
@@ -279,66 +281,15 @@ class _WebTabState extends State<WebTab> with AutomaticKeepAliveClientMixin {
 
   @override
   void dispose() {
-    for (final s in _watchSubs.values) { s.cancel(); }
+    for (final s in _watchSubs.values) {
+      s.cancel();
+    }
     _watchSubs.clear();
     super.dispose();
   }
 
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel('NativeGeo', onMessageReceived: _onGeoMessage)
-      ..setBackgroundColor(const Color(0xFFFFFFFF))
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) { _navStarted?.complete(); _navStarted = null; },
-          onPageFinished: (_) { _injectGeoPolyfill(); },
-          onProgress: (p) => setState(() => _progress = p),
-          onNavigationRequest: (req) async {
-            if (await _handleExternal(req.url)) return NavigationDecision.prevent;
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.initialUrl));
-  }
-
-  // JS → Dart (geolocation köprüsü)
-  Future<void> _onGeoMessage(JavaScriptMessage msg) async {
-    try {
-      final data = jsonDecode(msg.message) as Map<String, dynamic>;
-      final type = data['type'] as String;
-
-      if (type == 'getOnce') {
-        final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-        await _controller.runJavaScript(
-          "window.__nativeGeo_receiveOnce(${pos.latitude},${pos.longitude},${pos.accuracy});",
-        );
-      } else if (type == 'watch') {
-        final id = data['id'] as String;
-        _watchSubs[id]?.cancel();
-        final sub = Geolocator.getPositionStream(
-          locationSettings: const LocationSettings(accuracy: LocationAccuracy.best, distanceFilter: 3),
-        ).listen((pos) {
-          _controller.runJavaScript(
-            "window.__nativeGeo_receiveWatch('$id',${pos.latitude},${pos.longitude},${pos.accuracy});",
-          );
-        });
-        _watchSubs[id] = sub;
-      } else if (type == 'clear') {
-        final id = data['id'] as String;
-        await _watchSubs[id]?.cancel();
-        _watchSubs.remove(id);
-      }
-    } catch (_) {}
-  }
-
-  // Geolocation polyfill – JS tarafı
-  Future<void> _injectGeoPolyfill() async {
-    const js = r'''
+  // --- Geolocation polyfill (JS)
+  static const _geoPolyfill = r'''
 (function(){
   if (window.__nativeGeoPolyfilled) return;
   window.__nativeGeoPolyfilled = true;
@@ -391,7 +342,82 @@ class _WebTabState extends State<WebTab> with AutomaticKeepAliveClientMixin {
   };
 })();
 ''';
-    await _controller.runJavaScript(js);
+
+  Future<void> _injectGeoPolyfill({bool force = false}) async {
+    if (_polyfillInjected && !force) return;
+    try {
+      await _controller.runJavaScript(_geoPolyfill);
+      _polyfillInjected = true;
+      // SPA/iframe gecikmeleri için küçük tekrarlar
+      Future.delayed(const Duration(milliseconds: 300), () {
+        _controller.runJavaScript(_geoPolyfill);
+      });
+      Future.delayed(const Duration(seconds: 1), () {
+        _controller.runJavaScript(_geoPolyfill);
+      });
+    } catch (_) {}
+  }
+
+  // JS → Dart köprüsü
+  Future<void> _onGeoMessage(JavaScriptMessage msg) async {
+    try {
+      final data = jsonDecode(msg.message) as Map<String, dynamic>;
+      final type = data['type'] as String;
+
+      if (type == 'getOnce') {
+        final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        await _controller.runJavaScript(
+          "window.__nativeGeo_receiveOnce(${pos.latitude},${pos.longitude},${pos.accuracy});",
+        );
+      } else if (type == 'watch') {
+        final id = data['id'] as String;
+        _watchSubs[id]?.cancel();
+        final sub = Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.best, distanceFilter: 3),
+        ).listen((pos) {
+          _controller.runJavaScript(
+            "window.__nativeGeo_receiveWatch('$id',${pos.latitude},${pos.longitude},${pos.accuracy});",
+          );
+        });
+        _watchSubs[id] = sub;
+      } else if (type == 'clear') {
+        final id = data['id'] as String;
+        await _watchSubs[id]?.cancel();
+        _watchSubs.remove(id);
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel('NativeGeo', onMessageReceived: _onGeoMessage)
+      ..setBackgroundColor(const Color(0xFFFFFFFF))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (_) {
+            // (Search preload için) sayfa başladı sinyali
+            _navStarted?.complete();
+            _navStarted = null;
+            // iOS için erken polyfill
+            _polyfillInjected = false;
+            _injectGeoPolyfill(force: true);
+          },
+          onPageFinished: (_) {
+            // SPA/iframe için tekrar
+            _injectGeoPolyfill(force: true);
+          },
+          onProgress: (p) => setState(() => _progress = p),
+          onNavigationRequest: (req) async {
+            if (await _handleExternal(req.url)) return NavigationDecision.prevent;
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(widget.initialUrl));
   }
 
   Future<bool> _handleExternal(String url) async {
@@ -405,15 +431,12 @@ class _WebTabState extends State<WebTab> with AutomaticKeepAliveClientMixin {
         final httpsUrl = url.replaceFirst('intent://', 'https://');
         return await launchUrl(Uri.parse(httpsUrl), mode: LaunchMode.externalApplication);
       }
-
       final uri = Uri.parse(url);
       final scheme = uri.scheme.toLowerCase();
-
       const ext = {'tel', 'sms', 'mailto', 'whatsapp', 'geo'};
       if (ext.contains(scheme)) {
         return await launchUrl(uri, mode: LaunchMode.externalApplication);
       }
-
       final h = uri.host.toLowerCase();
       final p = uri.path.toLowerCase();
       final isMap = h.contains('maps.app.goo.gl') ||
@@ -442,12 +465,41 @@ class _WebTabState extends State<WebTab> with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    // WebView + iOS kenar geri kaydırma overlay’i
+    final webColumn = Column(
+      children: [
+        if (_progress < 100) LinearProgressIndicator(value: _progress / 100, minHeight: 3),
+        Expanded(child: SafeArea(top: true, bottom: false, child: WebViewWidget(controller: _controller))),
+      ],
+    );
+
     return WillPopScope(
       onWillPop: _handleBack,
-      child: Column(
+      child: Stack(
         children: [
-          if (_progress < 100) LinearProgressIndicator(value: _progress / 100, minHeight: 3),
-          Expanded(child: SafeArea(top: true, bottom: false, child: WebViewWidget(controller: _controller))),
+          webColumn,
+          if (Platform.isIOS)
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 24, // sol kenar "geri" tutacağı
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragStart: (_) => _dragDx = 0,
+                onHorizontalDragUpdate: (d) {
+                  if (d.delta.dx > 0) _dragDx += d.delta.dx; // sağa doğru sürükleme
+                },
+                onHorizontalDragEnd: (_) async {
+                  if (_dragDx > 60) {
+                    if (await _controller.canGoBack()) {
+                      await _controller.goBack();
+                    }
+                  }
+                  _dragDx = 0;
+                },
+              ),
+            ),
         ],
       ),
     );
