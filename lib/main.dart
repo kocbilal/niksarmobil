@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -167,10 +168,11 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
     _fadePulse();
   }
 
-  // Anasayfa kısayolları → ilgili hazır WebView’e git (alt menüde seçim YOK)
+  // Anasayfa kısayolları → ilgili hazır WebView'e git (alt menüde seçim YOK)
   void _openShortcut(String url) {
     final u = Uri.tryParse(url);
     final path = (u?.path ?? '').toLowerCase();
+    final host = u?.host.toLowerCase() ?? '';
 
     if (path.contains('nobetci-eczaneler')) {
       _stackIndex = idxNobetci;
@@ -178,7 +180,8 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
       _stackIndex = idxKesfet;
     } else if (path.contains('ulasim')) {
       _stackIndex = idxUlasim;
-    } else if (path.contains('belediyem')) {
+    } else if (host.contains('niksar.bel.tr')) {
+      // Belediyem için özel kontrol
       _stackIndex = idxBelediyem;
     } else if (path.contains('etkinlikler')) {
       _stackIndex = idxEtkinlikler;
@@ -190,6 +193,14 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
       _stackIndex = idxKesfet;
     }
     setState(() {});
+    _fadePulse();
+  }
+
+  // Yer kartına tıklanınca WebView'de aç
+  void _openPlace(String url) {
+    // Yer sayfasını Search WebView'de aç (çünkü Search WebView'i zaten hazır)
+    _keySearch.currentState?.loadUrl(url);
+    setState(() => _stackIndex = idxSearch);
     _fadePulse();
   }
 
@@ -210,8 +221,12 @@ class _RootShellState extends State<RootShell> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
-    final pages = <Widget>[
-      HomeNativePage(onShortcut: _openShortcut, onSearch: _openSearch),
+         final pages = <Widget>[
+       HomeNativePage(
+         onShortcut: _openShortcut, 
+         onSearch: _openSearch,
+         onPlaceTap: _openPlace,
+       ),
       WebTab(key: _keyKesfet, initialUrl: 'https://niksarmobil.tr/kesfet'),
       const _DummyPage(), // Çek Gönder dışa açılıyor
       WebTab(key: _keyNobetci, initialUrl: 'https://niksarmobil.tr/nobetci-eczaneler'),
@@ -468,7 +483,7 @@ class _WebTabState extends State<WebTab> with AutomaticKeepAliveClientMixin {
     // WebView + iOS kenar geri kaydırma overlay’i
     final webColumn = Column(
       children: [
-        if (_progress < 100) LinearProgressIndicator(value: _progress / 100, minHeight: 3),
+
         Expanded(child: SafeArea(top: true, bottom: false, child: WebViewWidget(controller: _controller))),
       ],
     );
@@ -506,11 +521,115 @@ class _WebTabState extends State<WebTab> with AutomaticKeepAliveClientMixin {
   }
 }
 
-/// Anasayfa — butonlar önceden yüklenmiş tablara gider; arama Search tabına
-class HomeNativePage extends StatelessWidget {
+/// Anasayfa — yeni tasarım ile güncellendi
+class HomeNativePage extends StatefulWidget {
   final void Function(String url) onShortcut;
   final Future<void> Function(String encodedQuery) onSearch;
-  const HomeNativePage({super.key, required this.onShortcut, required this.onSearch});
+  final void Function(String url) onPlaceTap; // Yer kartına tıklanınca WebView açmak için
+  const HomeNativePage({
+    super.key, 
+    required this.onShortcut, 
+    required this.onSearch,
+    required this.onPlaceTap,
+  });
+
+  @override
+  State<HomeNativePage> createState() => _HomeNativePageState();
+}
+
+class _HomeNativePageState extends State<HomeNativePage> {
+  List<Map<String, dynamic>> _recommendedPlaces = [];
+  bool _isLoadingPlaces = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchRecommendedPlaces();
+  }
+
+  Future<void> _fetchRecommendedPlaces() async {
+    try {
+      // WordPress REST API'den "Yer" post type'ını çek
+      final response = await http.get(
+        Uri.parse('https://niksarmobil.tr/wp-json/wp/v2/yer?per_page=10&_embed'),
+        headers: {'Accept': 'application/json'},
+      );
+
+      print('API Response Status: ${response.statusCode}');
+      print('API Response Body: ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}');
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        print('API Data Length: ${data.length}');
+        
+                 setState(() {
+           _recommendedPlaces = data.map((item) {
+             // Featured image URL'sini _embedded'den al
+             String featuredImageUrl = '';
+             if (item['_embedded'] != null && 
+                 item['_embedded']['wp:featuredmedia'] != null && 
+                 item['_embedded']['wp:featuredmedia'].isNotEmpty) {
+               final media = item['_embedded']['wp:featuredmedia'][0];
+               featuredImageUrl = media['source_url'] ?? '';
+               print('Found image: $featuredImageUrl');
+             }
+             
+             // Tip bilgisini class_list'ten al
+             String kategori = '';
+             if (item['class_list'] != null) {
+               final classList = item['class_list'] as List;
+               for (String className in classList) {
+                 if (className.startsWith('tip-')) {
+                   kategori = className.replaceFirst('tip-', '');
+                   break;
+                 }
+               }
+             }
+             
+             return {
+               'id': item['id'],
+               'title': item['title']['rendered'] ?? '',
+               'excerpt': item['excerpt']?['rendered'] ?? '',
+               'content': item['content']['rendered'] ?? '',
+               'featured_media': item['featured_media'] ?? 0,
+               'featured_image_url': featuredImageUrl,
+               'link': item['link'] ?? '',
+               // ACF alanları boş olduğu için varsayılan değerler
+               'adres': 'Niksar, Tokat',
+               'telefon': '',
+               'website': '',
+               'calisma_saatleri': '',
+               'kategori': kategori,
+               'modified': item['modified'] ?? '', // Güncellenme tarihi eklendi
+             };
+           }).toList();
+           
+           // Güncellenme tarihine göre sırala (en yeni güncellenen en üstte)
+           _recommendedPlaces.sort((a, b) {
+             final dateA = DateTime.tryParse(a['modified'] ?? '') ?? DateTime(1900);
+             final dateB = DateTime.tryParse(b['modified'] ?? '') ?? DateTime(1900);
+             return dateB.compareTo(dateA); // Azalan sıralama (en yeni önce)
+           });
+           
+           _isLoadingPlaces = false;
+         });
+        
+        print('Processed Places: ${_recommendedPlaces.length}');
+        print('First Place: ${_recommendedPlaces.isNotEmpty ? _recommendedPlaces.first : 'No places'}');
+      } else {
+        print('API Hatası: ${response.statusCode}');
+        print('Error Body: ${response.body}');
+        setState(() {
+          _isLoadingPlaces = false;
+        });
+      }
+    } catch (e) {
+      print('Veri çekme hatası: $e');
+      setState(() {
+        _isLoadingPlaces = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -521,96 +640,392 @@ class HomeNativePage extends StatelessWidget {
       child: SingleChildScrollView(
         child: Column(
           children: [
+            // Üst kısım - Arkaplan görseli + karşılama mesajı
             Container(
-              height: 220,
+              height: 280,
               width: double.infinity,
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [green.withOpacity(0.95), green.withOpacity(0.75)],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
+                // Arkaplan görseli assets'ten yükleniyor
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(30),
+                  bottomRight: Radius.circular(30),
                 ),
               ),
               child: Stack(
-                alignment: Alignment.center,
                 children: [
-                  Positioned(
-                    top: 12,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(20),
+                  // Arkaplan görseli
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(30),
+                        bottomRight: Radius.circular(30),
                       ),
-                      child: const Text('28°  ☀️', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                      child: Image.asset(
+                        'assets/header.jpg',
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: green.withOpacity(0.9),
+                              borderRadius: const BorderRadius.only(
+                                bottomLeft: Radius.circular(30),
+                                bottomRight: Radius.circular(30),
+                              ),
+                            ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.image,
+                                size: 60,
+                                color: Colors.white54,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
-                  const Positioned(
-                    top: 56,
-                    child: Text(
-                      'Selam Bugün\nNasılsın?',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800, height: 1.15),
-                    ),
-                  ),
-                  Positioned(
-                    bottom: 16,
-                    left: 16,
-                    right: 16,
+                  // Gradient overlay
+                  Positioned.fill(
                     child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: const BorderRadius.only(
+                          bottomLeft: Radius.circular(30),
+                          bottomRight: Radius.circular(30),
+                        ),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.3),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Karşılama mesajı
+                  Positioned(
+                    bottom: 20,
+                    left: 20,
+                    right: 20,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Hoş Geldiniz!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Niksar\'ın güzelliklerini keşfedin',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        // Arama kutusu
+                        Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 12, offset: Offset(0, 6))],
+                            borderRadius: BorderRadius.circular(25),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black12,
+                                blurRadius: 15,
+                                offset: Offset(0, 5),
+                              ),
+                            ],
                       ),
                       child: TextField(
                         controller: searchCtrl,
                         onSubmitted: (v) {
                           final q = v.trim();
-                          if (q.isNotEmpty) onSearch(Uri.encodeQueryComponent(q));
+                              if (q.isNotEmpty) widget.onSearch(Uri.encodeQueryComponent(q));
                         },
                         textInputAction: TextInputAction.search,
                         decoration: InputDecoration(
-                          hintText: 'Ara',
-                          prefixIcon: const Icon(Icons.search),
+                              hintText: 'Niksar\'da ara...',
+                              prefixIcon: const Icon(Icons.search, color: Color(0xFF666666)),
                           suffixIcon: IconButton(
-                            icon: const Icon(Icons.arrow_forward),
+                                icon: const Icon(Icons.arrow_forward, color: Color(0xFF00BF80)),
                             onPressed: () {
                               final q = searchCtrl.text.trim();
-                              if (q.isNotEmpty) onSearch(Uri.encodeQueryComponent(q));
+                                  if (q.isNotEmpty) widget.onSearch(Uri.encodeQueryComponent(q));
                             },
                           ),
                           border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                         ),
                       ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 24,
-              runSpacing: 18,
+            const SizedBox(height: 20), // 30'dan 20'ye düşürüldü
+
+            // 8 buton grid - kompakt tasarım
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 16), // 20'den 16'ya düşürüldü
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _Quick(icon: Icons.explore, label: 'Keşfet', url: 'https://niksarmobil.tr/kesfet', onTap: onShortcut),
-                _Quick(icon: Icons.local_hospital, label: 'Nöbetçi\nEczane', url: 'https://niksarmobil.tr/nobetci-eczaneler', onTap: onShortcut),
-                _Quick(icon: Icons.directions_bus, label: 'Ulaşım', url: 'https://niksarmobil.tr/ulasim', onTap: onShortcut),
-                _Quick(icon: Icons.apartment, label: 'Belediyem', url: 'https://niksarmobil.tr/belediyem', onTap: onShortcut),
-                _Quick(icon: Icons.event, label: 'Etkinlikler', url: 'https://niksarmobil.tr/etkinlikler', onTap: onShortcut),
-                _Quick(icon: Icons.photo_camera, label: 'Çek Gönder', url: 'https://wa.me/905018050060', onTap: onShortcut),
-                _Quick(icon: Icons.credit_card, label: 'Online\nÖdeme', url: 'https://niksarmobil.tr/odeme', onTap: onShortcut),
-                _Quick(icon: Icons.call, label: 'Rehber', url: 'https://niksarmobil.tr/rehber', onTap: onShortcut),
-              ],
+                  const Text(
+                    'Hızlı Erişim',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2C3E50),
+                    ),
+                  ),
+                  const SizedBox(height: 12), // 20'den 12'ye düşürüldü
+                  GridView.count(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    childAspectRatio: 0.85,
+                    children: [
+                      _Quick(
+                        icon: Icons.explore_outlined,
+                        label: 'Keşfet',
+                        url: 'https://niksarmobil.tr/kesfet',
+                        onTap: widget.onShortcut,
+                      ),
+                      _Quick(
+                        icon: Icons.medication,
+                        label: 'Nöbetçi\nEczane',
+                        url: 'https://niksarmobil.tr/nobetci-eczaneler',
+                        onTap: widget.onShortcut,
+                      ),
+                      _Quick(
+                        icon: Icons.directions_bus,
+                        label: 'Ulaşım',
+                        url: 'https://niksarmobil.tr/ulasim',
+                        onTap: widget.onShortcut,
+                      ),
+                      _Quick(
+                        icon: Icons.apartment,
+                        label: 'Belediyem',
+                        url: 'https://niksar.bel.tr',
+                        onTap: widget.onShortcut,
+                      ),
+                      _Quick(
+                        icon: Icons.event,
+                        label: 'Etkinlikler',
+                        url: 'https://niksarmobil.tr/etkinlikler',
+                        onTap: widget.onShortcut,
+                      ),
+                      _Quick(
+                        icon: Icons.credit_card,
+                        label: 'Online\nÖdeme',
+                        url: 'https://e-hizmet.niksar.bel.tr/#/home',
+                        onTap: (url) async {
+                          // Harici tarayıcıda aç
+                          final uri = Uri.parse(url);
+                          if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+                            await launchUrl(uri);
+                          }
+                        },
+                      ),
+                      _Quick(
+                        icon: Icons.phone,
+                        label: 'Rehber',
+                        url: 'https://niksarmobil.tr/rehber',
+                        onTap: widget.onShortcut,
+                      ),
+                      _Quick(
+                        icon: Icons.emergency,
+                        label: 'Acil\nDurum',
+                        url: 'acil_durum',
+                        onTap: (url) {
+                          // TODO: Acil durum sayfası native olarak tasarlanacak
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Acil durum sayfası yakında eklenecek'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 24),
+
+                         const SizedBox(height: 2), // 12'den 8'e düşürüldü
+
+                          // Önerilen yerler
+             Container(
+               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 2), // 16'dan 8'e düşürüldü
+               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Önerilen Yerler',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2C3E50),
+                    ),
+                  ),
+                                     const SizedBox(height: 2), // 12'den 8'e düşürüldü
+                  if (_isLoadingPlaces)
+                    const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF00BF80),
+                      ),
+                    )
+                  else if (_recommendedPlaces.isNotEmpty)
+                    SizedBox(
+                      height: 200,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _recommendedPlaces.length,
+                        itemBuilder: (context, index) {
+                          final place = _recommendedPlaces[index];
+                                                     return GestureDetector(
+                             onTap: () => widget.onPlaceTap(place['link']),
+                             child: Container(
+                               width: 280,
+                               margin: const EdgeInsets.only(right: 16),
+                               decoration: BoxDecoration(
+                                 color: Colors.white,
+                                 borderRadius: BorderRadius.circular(16),
+                                 boxShadow: const [
+                                   BoxShadow(
+                                     color: Colors.black12,
+                                     blurRadius: 10,
+                                     offset: Offset(0, 4),
+                                   ),
+                                 ],
+                               ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Yer görseli
+                                if (place['featured_image_url'].isNotEmpty)
+                                  ClipRRect(
+                                    borderRadius: const BorderRadius.only(
+                                      topLeft: Radius.circular(16),
+                                      topRight: Radius.circular(16),
+                                    ),
+                                    child: Image.network(
+                                      place['featured_image_url'],
+                                      width: double.infinity,
+                                      height: 120,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return Container(
+                                          width: double.infinity,
+                                          height: 120,
+                                          color: Colors.grey[300],
+                                          child: const Icon(
+                                            Icons.image_not_supported,
+                                            color: Colors.grey,
+                                            size: 40,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  )
+                                else
+                                  Container(
+                                    width: double.infinity,
+                                    height: 120,
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[300],
+                                      borderRadius: const BorderRadius.only(
+                                        topLeft: Radius.circular(16),
+                                        topRight: Radius.circular(16),
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.location_on,
+                                      color: Colors.grey,
+                                      size: 40,
+                                    ),
+                                  ),
+                                // Yer bilgileri
+                                Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        place['title'],
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF2C3E50),
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (place['excerpt'].isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          place['excerpt'].replaceAll(RegExp(r'<[^>]*>'), ''),
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[600],
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                      
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                        },
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(
+                        child: Text(
+                          'Henüz önerilen yer bulunmuyor',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+                         const SizedBox(height: 10), // 30'dan 20'ye düşürüldü
           ],
         ),
       ),
     );
+  }
+
+  String _stripHtmlTags(String htmlText) {
+    return htmlText.replaceAll(RegExp(r'<[^>]*>'), '');
   }
 }
 
@@ -624,25 +1039,52 @@ class _Quick extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final green = const Color(0xFF00BF80);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(40),
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
           onTap: () => onTap(url),
           child: Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(color: green, shape: BoxShape.circle),
-            child: Icon(icon, color: Colors.white),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 6,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                icon,
+                color: green,
+                size: 20,
           ),
         ),
         const SizedBox(height: 6),
-        SizedBox(
-          width: 80,
-          child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600), maxLines: 2),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF2C3E50),
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -663,55 +1105,157 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-/// Alt menü – seçili olmayan durum destekli
+/// Alt menü – görseldeki tasarıma uygun modern tasarım
 class CustomBottomBar extends StatelessWidget {
   final BottomItem? selected;
   final void Function(BottomItem) onTap;
   const CustomBottomBar({super.key, required this.selected, required this.onTap});
 
+  // Her tab için özel renkler
+  Color _getActiveColor(BottomItem item) {
+    switch (item) {
+      case BottomItem.home:
+        return const Color(0xFF7F52B5); // Mor
+      case BottomItem.kesfet:
+        return const Color(0xFFE91E63); // Pembe
+      case BottomItem.cekGonder:
+        return const Color(0xFFFF9800); // Turuncu
+      case BottomItem.nobetci:
+        return const Color(0xFF00BCD4); // Teal
+      case BottomItem.ayarlar:
+        return const Color(0xFF4CAF50); // Yeşil
+    }
+  }
+
+  Color _getBackgroundColor(BottomItem item) {
+    switch (item) {
+      case BottomItem.home:
+        return const Color(0xFFE0D4F7); // Açık mor
+      case BottomItem.kesfet:
+        return const Color(0xFFFCE4EC); // Açık pembe
+      case BottomItem.cekGonder:
+        return const Color(0xFFFFF3E0); // Açık turuncu
+      case BottomItem.nobetci:
+        return const Color(0xFFE0F7FA); // Açık teal
+      case BottomItem.ayarlar:
+        return const Color(0xFFE8F5E8); // Açık yeşil
+    }
+  }
+
+  IconData _getIcon(BottomItem item) {
+    switch (item) {
+      case BottomItem.home:
+        return Icons.home_outlined;
+      case BottomItem.kesfet:
+        return Icons.explore_outlined;
+      case BottomItem.cekGonder:
+        return Icons.photo_camera_outlined;
+      case BottomItem.nobetci:
+        return Icons.medication; // İlaç ikonu
+      case BottomItem.ayarlar:
+        return Icons.settings_outlined;
+    }
+  }
+
+  String _getLabel(BottomItem item) {
+    switch (item) {
+      case BottomItem.home:
+        return 'Anasayfa';
+      case BottomItem.kesfet:
+        return 'Keşfet';
+      case BottomItem.cekGonder:
+        return 'Çek Gönder';
+      case BottomItem.nobetci:
+        return 'Nöbetçi';
+      case BottomItem.ayarlar:
+        return 'Ayarlar';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    Color colorFor(BottomItem item) =>
-        selected == item ? cs.primary : cs.onSurfaceVariant;
-
-    Widget btn(BottomItem item, IconData icon, String label) {
-      return InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => onTap(item),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 24, color: colorFor(item)),
-              const SizedBox(height: 4),
-              Text(label, style: TextStyle(fontSize: 12, color: colorFor(item))),
+    return Container(
+      color: const Color(0xFFF5F5F5), // Görseldeki açık gri arka plan
+      child: SafeArea(
+        top: false,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 15,
+                offset: const Offset(0, -3),
+              ),
             ],
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12), // Horizontal padding kısaltıldı
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildTab(BottomItem.home),
+              _buildTab(BottomItem.kesfet),
+              _buildTab(BottomItem.cekGonder),
+              _buildTab(BottomItem.nobetci),
+              _buildTab(BottomItem.ayarlar),
+            ],
+          ),
           ),
         ),
       );
     }
 
-    return SafeArea(
-      top: false,
+  Widget _buildTab(BottomItem item) {
+    final isSelected = selected == item;
+    
+    if (isSelected) {
+      // Aktif tab - pill-shaped background ile icon + text
+      return GestureDetector(
+        onTap: () => onTap(item),
       child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), // Horizontal padding kısaltıldı
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border(top: BorderSide(color: cs.outlineVariant, width: 0.8)),
+            color: _getBackgroundColor(item),
+            borderRadius: BorderRadius.circular(25),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+            mainAxisSize: MainAxisSize.min,
           children: [
-            btn(BottomItem.home, Icons.home_outlined, 'Anasayfa'),
-            btn(BottomItem.kesfet, Icons.explore_outlined, 'Keşfet'),
-            btn(BottomItem.cekGonder, Icons.photo_camera_outlined, 'Çek Gönder'),
-            btn(BottomItem.nobetci, Icons.local_hospital_outlined, 'Nöbetçi'),
-            btn(BottomItem.ayarlar, Icons.settings_outlined, 'Ayarlar'),
+              Icon(
+                _getIcon(item),
+                color: _getActiveColor(item),
+                size: 20, // Icon boyutu küçültüldü
+              ),
+              const SizedBox(width: 6), // Boşluk kısaltıldı
+              Text(
+                _getLabel(item),
+                style: TextStyle(
+                  color: _getActiveColor(item),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13, // Font boyutu küçültüldü
+                ),
+              ),
           ],
         ),
       ),
     );
+    } else {
+      // İnaktif tab - sadece icon
+      return GestureDetector(
+        onTap: () => onTap(item),
+        child: Container(
+          padding: const EdgeInsets.all(12), // Padding kısaltıldı
+          child: Icon(
+            _getIcon(item),
+            color: const Color(0xFF8E8E93),
+            size: 24, // Icon boyutu küçültüldü
+          ),
+        ),
+      );
+    }
   }
 }
