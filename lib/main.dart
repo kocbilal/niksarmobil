@@ -6,9 +6,29 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:firebase_core/firebase_core.dart';
+import 'services/notification_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Firebase ve bildirim servisini başlat
+  try {
+    await NotificationService.initialize();
+    print('Bildirim servisi başlatıldı');
+    
+    // FCM Token'ı daha belirgin şekilde yazdır
+    final token = NotificationService.fcmToken;
+    if (token != null) {
+      print('🔥 FCM TOKEN: $token');
+      print('🔥 FCM TOKEN (ilk 50 karakter): ${token.substring(0, 50)}...');
+    } else {
+      print('❌ FCM Token alınamadı!');
+    }
+  } catch (e) {
+    print('Bildirim servisi başlatılamadı: $e');
+  }
+  
   runApp(const NiksarMobilApp());
 }
 
@@ -844,20 +864,25 @@ class _HomeNativePageState extends State<HomeNativePage> {
                         url: 'https://niksarmobil.tr/rehber',
                         onTap: widget.onShortcut,
                       ),
-                      _Quick(
-                        icon: Icons.emergency,
-                        label: 'Acil\nDurum',
-                        url: 'acil_durum',
-                        onTap: (url) {
-                          // TODO: Acil durum sayfası native olarak tasarlanacak
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Acil durum sayfası yakında eklenecek'),
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        },
-                      ),
+                                             _Quick(
+                         icon: Icons.emergency,
+                         label: 'Acil\nDurum',
+                         url: 'acil_durum',
+                                                   onTap: (url) {
+                            // Test bildirimi göster
+                            NotificationService.showLocalNotification(
+                              title: 'Test Bildirimi',
+                              body: 'Bu bir test bildirimidir!',
+                            );
+                            
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Test bildirimi gönderildi - FCM Token: ${NotificationService.fcmToken != null ? (NotificationService.fcmToken!.length > 20 ? NotificationService.fcmToken!.substring(0, 20) : NotificationService.fcmToken!) : "Alınamadı"}...'),
+                                duration: const Duration(seconds: 3),
+                              ),
+                            );
+                          },
+                       ),
                     ],
                   ),
                 ],

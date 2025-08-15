@@ -49,6 +49,20 @@
     <string>Yakınınızdaki hizmetleri göstermek için konumunuza ihtiyaç var.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>Yakınınızdaki hizmetleri göstermek için konumunuza ihtiyaç var.</string>
+    
+    <!-- Firebase Messaging -->
+    <key>FirebaseAppDelegateProxyEnabled</key>
+    <false/>
+    
+    <!-- Notification permissions -->
+    <key>NSUserNotificationUsageDescription</key>
+    <string>Niksar Mobil uygulaması size önemli bildirimler göndermek için izin istiyor.</string>
+    
+    <!-- Background modes -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>remote-notification</string>
+    </array>
 
 </dict>
 </plist>

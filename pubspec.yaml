@@ -38,6 +38,8 @@ dependencies:
   animations: ^2.0.8
   geolocator: ^9.0.2   # ⬅️ 10.x yerine 9.x kullan
   http: ^1.1.0
+  firebase_core: ^2.24.2
+  firebase_messaging: ^14.7.10
 
 
 dev_dependencies:
