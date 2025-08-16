@@ -1,165 +1,170 @@
-import 'dart:convert';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 
-// Background message handler - top-level function olmalı
-@pragma('vm:entry-point')
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  try {
-    print('🔔 BACKGROUND MESSAGE ALINDI!');
-    print('📱 Message ID: ${message.messageId ?? 'NULL'}');
-    print('📱 From: ${message.from ?? 'NULL'}');
-    print('📱 Data: ${message.data.toString()}');
-    print('📱 Notification Title: ${message.notification?.title ?? 'NULL'}');
-    print('📱 Notification Body: ${message.notification?.body ?? 'NULL'}');
-    
-    // Firebase'i başlat (background'da gerekli)
-    await Firebase.initializeApp();
-  } catch (e) {
-    print('❌ Background message handler hatası: $e');
-  }
-}
-
 class NotificationService {
-  static final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
+  static final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
   
-  static String? _fcmToken;
-  
-  // FCM Token'ı al
-  static String? get fcmToken => _fcmToken;
-  
-  // Bildirim servisini başlat
+  // Yerel bildirim servisini başlat
   static Future<void> initialize() async {
     try {
-      print('🔍 Firebase başlatılıyor...');
-      // Firebase'i başlat
-      await Firebase.initializeApp();
-      print('✅ Firebase başarıyla başlatıldı!');
+      print('🔍 Yerel bildirim servisi başlatılıyor...');
       
-      // FCM izinlerini iste
-      await _requestPermissions();
+      // Android ayarları
+      const AndroidInitializationSettings androidSettings =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
       
-      // FCM token'ı al
-      await _getFCMToken();
+      // iOS ayarları
+      const DarwinInitializationSettings iosSettings =
+          DarwinInitializationSettings(
+            requestAlertPermission: true,
+            requestBadgePermission: true,
+            requestSoundPermission: true,
+          );
       
-      // Background message handler'ı ayarla
-      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+      // Genel ayarlar
+      const InitializationSettings settings = InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
       
-      // Foreground message handler'ı ayarla
-      FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+      // Bildirimleri başlat
+      await _localNotifications.initialize(
+        settings,
+        onDidReceiveNotificationResponse: _onNotificationTap,
+      );
       
-      // Notification tap handler'ı ayarla
-      FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+      // Android için bildirim kanalı oluştur
+      await _createNotificationChannel();
       
-      print('✅ Firebase Messaging başarıyla başlatıldı!');
+      print('✅ Yerel bildirim servisi başarıyla başlatıldı!');
     } catch (e) {
-      print('❌ Firebase başlatılamadı: $e');
+      print('❌ Yerel bildirim servisi başlatılamadı: $e');
       rethrow;
     }
   }
   
-  // FCM izinlerini iste
-  static Future<void> _requestPermissions() async {
-    NotificationSettings settings = await _firebaseMessaging.requestPermission(
-      alert: true,
-      announcement: false,
-      badge: true,
-      carPlay: false,
-      criticalAlert: false,
-      provisional: false,
-      sound: true,
+  // Android için bildirim kanalı oluştur
+  static Future<void> _createNotificationChannel() async {
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'niksar_mobile_channel',
+      'Niksar Mobil Bildirimleri',
+      description: 'Niksar Mobil uygulaması için bildirimler',
+      importance: Importance.high,
     );
     
-    print('Kullanıcı izni: ${settings.authorizationStatus}');
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
   }
   
-  // FCM Token'ı al
-  static Future<void> _getFCMToken() async {
-    try {
-      print('🔍 FCM Token alınıyor...');
-      _fcmToken = await _firebaseMessaging.getToken();
-      
-      if (_fcmToken != null) {
-        print('✅ FCM Token başarıyla alındı!');
-        print('🔥 FCM TOKEN: $_fcmToken');
-        if (_fcmToken!.length > 50) {
-          print('🔥 FCM TOKEN (ilk 50 karakter): ${_fcmToken!.substring(0, 50)}...');
-        } else {
-          print('🔥 FCM TOKEN (tam): $_fcmToken');
-        }
-        print('🔥 FCM TOKEN uzunluğu: ${_fcmToken!.length} karakter');
-      } else {
-        print('❌ FCM Token null döndü!');
-      }
-    } catch (e) {
-      print('❌ FCM Token alınırken hata: $e');
-    }
-    
-    // Token yenilendiğinde
-    _firebaseMessaging.onTokenRefresh.listen((token) {
-      _fcmToken = token;
-      print('🔄 Yeni FCM Token: $_fcmToken');
-      print('🔄 Yeni FCM Token (ilk 50 karakter): ${token.substring(0, 50)}...');
-      // Burada token'ı sunucunuza gönderebilirsiniz
-    });
-  }
-  
-  // Local notification göster (basit SnackBar ile)
-  static void showLocalNotification({
+  // Yerel bildirim göster
+  static Future<void> showLocalNotification({
     required String title,
     required String body,
     String? payload,
-  }) {
-    // Flutter context olmadığı için sadece print yapıyoruz
-    // Gerçek uygulamada ScaffoldMessenger kullanılacak
-    print('Local Notification: $title - $body');
-  }
-  
-  // Foreground message handler
-  static void _handleForegroundMessage(RemoteMessage message) {
+  }) async {
     try {
-      print('🔔 FOREGROUND MESSAGE ALINDI!');
-      print('📱 Message ID: ${message.messageId ?? 'NULL'}');
-      print('📱 From: ${message.from ?? 'NULL'}');
-      print('📱 Data: ${message.data.toString()}');
-      print('📱 Notification Title: ${message.notification?.title ?? 'NULL'}');
-      print('📱 Notification Body: ${message.notification?.body ?? 'NULL'}');
-      print('📱 Collapse Key: ${message.collapseKey ?? 'NULL'}');
-      print('📱 Sent Time: ${message.sentTime ?? 'NULL'}');
-      print('📱 TTL: ${message.ttl ?? 'NULL'}');
+      const AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+        'niksar_mobile_channel',
+        'Niksar Mobil Bildirimleri',
+        channelDescription: 'Niksar Mobil uygulaması için bildirimler',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      );
       
-      // Foreground'da bildirim göster (sadece print)
-      print('Foreground Notification: ${message.notification?.title ?? 'Yeni Bildirim'} - ${message.notification?.body ?? ''}');
+      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      
+      const NotificationDetails details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+      
+      await _localNotifications.show(
+        DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title,
+        body,
+        details,
+        payload: payload,
+      );
+      
+      print('✅ Yerel bildirim gönderildi: $title');
     } catch (e) {
-      print('❌ Foreground message handler hatası: $e');
+      print('❌ Yerel bildirim gösterilemedi: $e');
     }
   }
   
-  // Notification tap handler
-  static void _handleNotificationTap(RemoteMessage message) {
+  // Bildirime tıklanma işlemi
+  static void _onNotificationTap(NotificationResponse response) {
+    print('🔔 Bildirime tıklandı!');
+    print('📱 Payload: ${response.payload ?? 'Boş'}');
+    
+    // Burada istediğiniz sayfaya yönlendirebilirsiniz
+    // Örneğin: Navigator.pushNamed(context, '/notification-detail');
+  }
+  
+  // Zamanlanmış bildirim göster
+  static Future<void> scheduleNotification({
+    required String title,
+    required String body,
+    required DateTime scheduledTime,
+    String? payload,
+  }) async {
     try {
-      print('🔔 NOTIFICATION TIKLANDI!');
-      print('📱 Message ID: ${message.messageId ?? 'NULL'}');
-      print('📱 From: ${message.from ?? 'NULL'}');
-      print('📱 Data: ${message.data.toString()}');
-      print('📱 Notification Title: ${message.notification?.title ?? 'NULL'}');
-      print('📱 Notification Body: ${message.notification?.body ?? 'NULL'}');
-      // Burada istediğiniz sayfaya yönlendirebilirsiniz
+      const AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+        'niksar_mobile_channel',
+        'Niksar Mobil Bildirimleri',
+        channelDescription: 'Niksar Mobil uygulaması için bildirimler',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+      );
+      
+      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      
+      const NotificationDetails details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+      
+      await _localNotifications.zonedSchedule(
+        DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title,
+        body,
+        scheduledTime,
+        details,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        payload: payload,
+      );
+      
+      print('✅ Zamanlanmış bildirim ayarlandı: $title');
     } catch (e) {
-      print('❌ Notification tap handler hatası: $e');
+      print('❌ Zamanlanmış bildirim ayarlanamadı: $e');
     }
   }
   
-  // Topic'e abone ol
-  static Future<void> subscribeToTopic(String topic) async {
-    await _firebaseMessaging.subscribeToTopic(topic);
-    print('Topic\'e abone olundu: $topic');
+  // Tüm bekleyen bildirimleri iptal et
+  static Future<void> cancelAllNotifications() async {
+    await _localNotifications.cancelAll();
+    print('✅ Tüm bildirimler iptal edildi');
   }
   
-  // Topic'ten çık
-  static Future<void> unsubscribeFromTopic(String topic) async {
-    await _firebaseMessaging.unsubscribeFromTopic(topic);
-    print('Topic\'ten çıkıldı: $topic');
+  // Belirli bir bildirimi iptal et
+  static Future<void> cancelNotification(int id) async {
+    await _localNotifications.cancel(id);
+    print('✅ Bildirim iptal edildi: $id');
   }
 }

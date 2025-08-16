@@ -6,25 +6,15 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:http/http.dart' as http;
-import 'package:firebase_core/firebase_core.dart';
 import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Firebase ve bildirim servisini başlat
+  // Yerel bildirim servisini başlat
   try {
     await NotificationService.initialize();
-    print('Bildirim servisi başlatıldı');
-    
-    // FCM Token'ı daha belirgin şekilde yazdır
-    final token = NotificationService.fcmToken;
-    if (token != null) {
-      print('🔥 FCM TOKEN: $token');
-      print('🔥 FCM TOKEN (ilk 50 karakter): ${token.substring(0, 50)}...');
-    } else {
-      print('❌ FCM Token alınamadı!');
-    }
+    print('Yerel bildirim servisi başlatıldı');
   } catch (e) {
     print('Bildirim servisi başlatılamadı: $e');
   }
@@ -872,13 +862,13 @@ class _HomeNativePageState extends State<HomeNativePage> {
                             // Test bildirimi göster
                             NotificationService.showLocalNotification(
                               title: 'Test Bildirimi',
-                              body: 'Bu bir test bildirimidir!',
+                              body: 'Bu bir yerel test bildirimidir!',
                             );
                             
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Test bildirimi gönderildi - FCM Token: ${NotificationService.fcmToken != null ? (NotificationService.fcmToken!.length > 20 ? NotificationService.fcmToken!.substring(0, 20) : NotificationService.fcmToken!) : "Alınamadı"}...'),
-                                duration: const Duration(seconds: 3),
+                              const SnackBar(
+                                content: Text('Yerel test bildirimi gönderildi!'),
+                                duration: Duration(seconds: 3),
                               ),
                             );
                           },
