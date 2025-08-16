@@ -28,25 +28,33 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_16.0.app/Contents/Developer
           sudo xcodebuild -license accept
 
-      - name: Clean and setup Flutter
+      - name: Clean Flutter
         run: |
           flutter clean
           flutter pub get
 
+      # İLK BUILD: podhelper.rb dosyasını oluştur
+      - name: Initial Flutter build (creates podhelper.rb)
+        run: |
+          flutter build ios --debug --no-codesign
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
+
+      # Şimdi pod install yap (podhelper.rb artık mevcut)
       - name: Install iOS dependencies
         run: |
           cd ios
           pod install --repo-update
           cd ..
 
-      # İMZA YOK: Sadece derle (release)
-      - name: Build iOS (no codesign)
+      # SON BUILD: Release için
+      - name: Build iOS Release (no codesign)
         run: |
           flutter build ios --release --no-codesign
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
 
-      # IPA paketleme - DİKKAT: IPA'nın tepesinde "Payload" klasörü olmalı
+      # IPA paketleme
       - name: Package unsigned IPA
         run: |
           rm -rf Payload

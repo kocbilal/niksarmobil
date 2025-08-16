@@ -29,17 +29,26 @@ jobs:
         sudo xcode-select --switch /Applications/Xcode_16.0.app/Contents/Developer
         sudo xcodebuild -license accept
       
-    - name: Clean and setup Flutter
+    - name: Clean Flutter
       run: |
         flutter clean
         flutter pub get
       
+    # İLK BUILD: podhelper.rb dosyasını oluştur
+    - name: Initial Flutter build (creates podhelper.rb)
+      run: |
+        flutter build ios --debug --no-codesign
+      env:
+        DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
+      
+    # Şimdi pod install yap (podhelper.rb artık mevcut)
     - name: Install CocoaPods
       run: |
         cd ios
         pod install --repo-update
         cd ..
         
+    # SON BUILD: Release için codesign ile
     - name: Build iOS (with codesign for AltStore)
       run: |
         flutter build ios --release --dart-define=FLUTTER_BUILD_NUMBER=${{ github.run_number }}
