@@ -45,6 +45,15 @@ jobs:
     - name: Get Flutter dependencies
       run: flutter pub get
       
+    - name: Flutter clean and precache
+      run: |
+        flutter clean
+        flutter precache --ios
+      
+    - name: Generate iOS project files
+      run: |
+        flutter build ios --config-only
+      
     - name: Build iOS app
       run: |
         flutter build ios --release --no-codesign

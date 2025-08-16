@@ -1,0 +1,111 @@
+name: iOS Build Fixed
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.24.0'
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        
+    - name: Flutter doctor
+      run: flutter doctor -v
+        
+    - name: Get Flutter dependencies
+      run: |
+        flutter clean
+        flutter pub get
+        
+    - name: Generate iOS configuration
+      run: |
+        flutter build ios --config-only --release
+        
+    - name: Check Generated.xcconfig
+      run: |
+        if [ ! -f "ios/Flutter/Generated.xcconfig" ]; then
+          echo "Generated.xcconfig not found, creating it..."
+          mkdir -p ios/Flutter
+          cat > ios/Flutter/Generated.xcconfig << EOF
+        // This is a generated file; do not edit or check into version control.
+        FLUTTER_ROOT=/Users/runner/hostedtoolcache/flutter/stable-${{ env.FLUTTER_VERSION }}-x64
+        FLUTTER_APPLICATION_PATH=${{ github.workspace }}
+        COCOAPODS_PARALLEL_CODE_SIGN=true
+        FLUTTER_TARGET=lib/main.dart
+        FLUTTER_BUILD_DIR=build
+        FLUTTER_BUILD_NAME=1.0.0
+        FLUTTER_BUILD_NUMBER=2
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]=i386
+        EXCLUDED_ARCHS[sdk=iphoneos*]=armv7
+        DART_OBFUSCATION=false
+        TRACK_WIDGET_CREATION=true
+        TREE_SHAKE_ICONS=false
+        PACKAGE_CONFIG=.dart_tool/package_config.json
+        EOF
+        fi
+        
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: true
+        
+    - name: Install iOS dependencies
+      run: |
+        cd ios
+        pod install --repo-update
+        cd ..
+        
+    - name: Build iOS app
+      run: |
+        flutter build ios --release --no-codesign
+        
+    - name: Create unsigned IPA
+      run: |
+        cd ios
+        
+        # Build dizinini oluştur
+        mkdir -p build
+        
+        # Flutter build çıktısını kopyala
+        cp -r build/ios/Release-iphoneos/Runner.app build/
+        
+        # IPA yapısını oluştur
+        mkdir -p build/Payload
+        mv build/Runner.app build/Payload/
+        
+        # IPA dosyasını oluştur
+        cd build
+        zip -r niksar-webview.ipa Payload/
+        
+        echo "IPA created successfully!"
+        ls -la *.ipa
+        
+    - name: Upload IPA artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: niksar-webview-${{ github.run_number }}
+        path: ios/build/niksar-webview.ipa
+        retention-days: 30
+        
+    - name: Build Summary
+      run: |
+        echo "🎉 iOS build completed successfully!"
+        echo "📱 IPA file: niksar-webview.ipa"
+        echo "📋 Build Number: ${{ github.run_number }}"
+        echo "🔧 Ready for AltStore installation"
