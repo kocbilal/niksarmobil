@@ -1,11 +1,7 @@
-name: iOS Build
+name: iOS Build Stable
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch:  # Sadece elle çalıştırılabilir
 
 jobs:
   build-ios:
@@ -28,31 +24,35 @@ jobs:
       run: |
         sudo xcode-select --switch /Applications/Xcode_16.0.app/Contents/Developer
         sudo xcodebuild -license accept
-      
-    - name: Install CocoaPods
+        
+    - name: Clean Flutter
+      run: |
+        flutter clean
+        flutter pub get
+        
+    - name: Install iOS dependencies
       run: |
         cd ios
+        pod deintegrate
+        pod cache clean --all
         pod install --repo-update
         cd ..
         
-    - name: Pub get
-      run: flutter pub get
-      
-    - name: Build iOS (with codesign for AltStore)
+    - name: Build iOS (no codesign)
       run: |
-        flutter clean
-        flutter build ios --release --dart-define=FLUTTER_BUILD_NUMBER=${{ github.run_number }}
+        flutter build ios --release --no-codesign
       env:
         DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
         
-    - name: Package signed IPA
+    - name: Package unsigned IPA
       run: |
-        cd build/ios/iphoneos
-        zip -r Runner.ipa Payload
-        cd ../../..
+        rm -rf Payload
+        mkdir -p Payload
+        cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
+        zip -r NiksarMobil-stable-unsigned.ipa Payload
     
     - name: Upload IPA
       uses: actions/upload-artifact@v4
       with:
-        name: NiksarMobil-iOS
-        path: build/ios/iphoneos/Runner.ipa
+        name: NiksarMobil-iOS-Stable
+        path: NiksarMobil-stable-unsigned.ipa
