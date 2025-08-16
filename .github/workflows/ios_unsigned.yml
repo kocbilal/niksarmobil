@@ -15,7 +15,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: '3.24.5'  # Spesifik Flutter versiyonu
+          flutter-version: '3.27.0'  # Daha yeni Flutter versiyonu
 
       - name: Flutter version
         run: flutter --version
