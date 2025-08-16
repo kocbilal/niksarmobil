@@ -2,68 +2,88 @@ name: iOS Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - release
 
 jobs:
   build-ios:
-    runs-on: macos-15  # macOS 15 (Sonoma) kullan
+    runs-on: macos-latest
     
     steps:
-    - name: Checkout
+    - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Set up Flutter
+    - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: '3.27.0'
+        flutter-version: '3.24.0'
         channel: 'stable'
         
-    - name: Flutter version
-      run: flutter --version
-      
-    - name: Setup iOS build environment
-      run: |
-        sudo xcode-select --switch /Applications/Xcode_16.0.app/Contents/Developer
-        sudo xcodebuild -license accept
-      
-    - name: Clean Flutter
-      run: |
-        flutter clean
-        flutter pub get
-      
-    # Flutter iOS dosyalarını oluştur
-    - name: Generate Flutter iOS files
-      run: |
-        flutter precache --ios
-        flutter build ios --debug --no-codesign --simulator
-      env:
-        DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
-      
-    # Şimdi pod install yap (podhelper.rb artık mevcut)
-    - name: Install CocoaPods
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: true
+        
+    - name: Install iOS dependencies
       run: |
         cd ios
-        pod install --repo-update
+        pod install
         cd ..
         
-    # SON BUILD: Release için codesign ile
-    - name: Build iOS (with codesign for AltStore)
+    - name: Get Flutter dependencies
+      run: flutter pub get
+      
+    - name: Build iOS app
       run: |
-        flutter build ios --release --dart-define=FLUTTER_BUILD_NUMBER=${{ github.run_number }}
-      env:
-        DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
+        flutter build ios --release --no-codesign
         
-    - name: Package signed IPA
+    - name: Create IPA
       run: |
-        cd build/ios/iphoneos
-        zip -r Runner.ipa Payload
-        cd ../../..
-    
-    - name: Upload IPA
+        cd ios
+        xcodebuild -workspace Runner.xcworkspace \
+                   -scheme Runner \
+                   -configuration Release \
+                   -destination generic/platform=iOS \
+                   -archivePath Runner.xcarchive \
+                   clean archive
+                   
+        xcodebuild -exportArchive \
+                   -archivePath Runner.xcarchive \
+                   -exportPath ./build \
+                   -exportOptionsPlist exportOptions.plist
+        cd ..
+        
+    - name: Upload IPA artifact
       uses: actions/upload-artifact@v4
       with:
-        name: NiksarMobil-iOS
-        path: build/ios/iphoneos/Runner.ipa
+        name: niksar-webview-ios
+        path: ios/build/*.ipa
+        retention-days: 30
+        
+    - name: Create Release
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.build_type == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ios/build/*.ipa
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        body: |
+          iOS build for testing
+          
+          - Build Number: ${{ github.run_number }}
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

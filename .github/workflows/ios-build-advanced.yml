@@ -1,0 +1,145 @@
+name: iOS Build with Code Signing
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - ad-hoc
+        - app-store
+
+env:
+  FLUTTER_VERSION: '3.24.0'
+  XCODE_VERSION: '15.0'
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: true
+        
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: ${{ env.XCODE_VERSION }}
+        
+    - name: Install iOS dependencies
+      run: |
+        cd ios
+        pod install --repo-update
+        cd ..
+        
+    - name: Get Flutter dependencies
+      run: flutter pub get
+      
+    - name: Flutter analyze
+      run: flutter analyze
+      
+    - name: Flutter test
+      run: flutter test
+      
+    - name: Build iOS app
+      run: |
+        flutter build ios --release --no-codesign
+        
+    - name: Create IPA with code signing
+      env:
+        BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+        P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      run: |
+        # Create variables
+        CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+        PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+        KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+        
+        # Import certificate and provisioning profile from secrets
+        echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+        echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode --output $PP_PATH
+        
+        # Create temporary keychain
+        security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+        security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+        
+        # Import certificate to keychain
+        security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+        security list-keychain -d user -s $KEYCHAIN_PATH
+        
+        # Apply provisioning profile
+        mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+        cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+        
+        # Build archive
+        cd ios
+        xcodebuild -workspace Runner.xcworkspace \
+                   -scheme Runner \
+                   -configuration Release \
+                   -destination generic/platform=iOS \
+                   -archivePath Runner.xcarchive \
+                   clean archive \
+                   CODE_SIGN_STYLE=Manual \
+                   CODE_SIGN_IDENTITY="iPhone Developer" \
+                   PROVISIONING_PROFILE_SPECIFIER="$(grep -a -A 0 -B 0 "UUID" $PP_PATH | grep -o "([A-F0-9]\{8\}-[A-F0-9]\{4\}-[A-F0-9]\{4\}-[A-F0-9]\{4\}-[A-F0-9]\{12\})" | sed 's/[()]//g')"
+                   
+        # Export IPA
+        xcodebuild -exportArchive \
+                   -archivePath Runner.xcarchive \
+                   -exportPath ./build \
+                   -exportOptionsPlist exportOptions.plist
+        cd ..
+        
+    - name: Upload IPA artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: niksar-webview-ios-${{ github.run_number }}
+        path: ios/build/*.ipa
+        retention-days: 30
+        
+    - name: Create Release
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.build_type == 'app-store'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ios/build/*.ipa
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        body: |
+          iOS build for testing
+          
+          - Build Number: ${{ github.run_number }}
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Flutter Version: ${{ env.FLUTTER_VERSION }}
+          - Xcode Version: ${{ env.XCODE_VERSION }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        # Clean up keychain
+        security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true

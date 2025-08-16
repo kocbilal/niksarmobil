@@ -1,0 +1,80 @@
+name: iOS Build Simple (No Code Signing)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.24.0'
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: true
+        
+    - name: Install iOS dependencies
+      run: |
+        cd ios
+        pod install --repo-update
+        cd ..
+        
+    - name: Get Flutter dependencies
+      run: flutter pub get
+      
+    - name: Flutter analyze
+      run: flutter analyze
+      
+    - name: Build iOS app
+      run: |
+        flutter build ios --release --no-codesign
+        
+    - name: Create unsigned IPA
+      run: |
+        cd ios
+        # Create build directory
+        mkdir -p build
+        
+        # Copy the built app
+        cp -r build/ios/Release-iphoneos/Runner.app build/
+        
+        # Create IPA structure
+        mkdir -p build/Payload
+        mv build/Runner.app build/Payload/
+        
+        # Create IPA file
+        cd build
+        zip -r niksar-webview-unsigned.ipa Payload/
+        cd ..
+        cd ..
+        
+    - name: Upload IPA artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: niksar-webview-unsigned-${{ github.run_number }}
+        path: ios/build/niksar-webview-unsigned.ipa
+        retention-days: 30
+        
+    - name: Build Summary
+      run: |
+        echo "🎉 iOS build completed successfully!"
+        echo "📱 IPA file: niksar-webview-unsigned.ipa"
+        echo "⚠️  Note: This is an unsigned IPA for testing only"
+        echo "🔧 To install on device, you'll need to sign it manually or use AltStore"

@@ -30,7 +30,7 @@ target 'Runner' do
   flutter_application_path = File.expand_path('..', __dir__)
   load File.join(flutter_application_path, 'ios', 'Flutter', 'podhelper.rb')
 
-  install_all_flutter_pods(flutter_application_path)
+  flutter_install_all_ios_pods(flutter_application_path)
   
   # Firebase için gerekli
   pod 'Firebase/Core'
