@@ -34,10 +34,11 @@ jobs:
         flutter clean
         flutter pub get
       
-    # İLK BUILD: podhelper.rb dosyasını oluştur
-    - name: Initial Flutter build (creates podhelper.rb)
+    # Flutter iOS dosyalarını oluştur
+    - name: Generate Flutter iOS files
       run: |
-        flutter build ios --debug --no-codesign
+        flutter precache --ios
+        flutter build ios --debug --no-codesign --simulator
       env:
         DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
       
