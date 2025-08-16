@@ -25,7 +25,7 @@ jobs:
         sudo xcode-select --switch /Applications/Xcode_16.0.app/Contents/Developer
         sudo xcodebuild -license accept
         
-    - name: Clean Flutter
+    - name: Clean and setup Flutter
       run: |
         flutter clean
         flutter pub get
@@ -33,8 +33,6 @@ jobs:
     - name: Install iOS dependencies
       run: |
         cd ios
-        pod deintegrate
-        pod cache clean --all
         pod install --repo-update
         cd ..
         

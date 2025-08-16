@@ -29,18 +29,19 @@ jobs:
         sudo xcode-select --switch /Applications/Xcode_16.0.app/Contents/Developer
         sudo xcodebuild -license accept
       
+    - name: Clean and setup Flutter
+      run: |
+        flutter clean
+        flutter pub get
+      
     - name: Install CocoaPods
       run: |
         cd ios
         pod install --repo-update
         cd ..
         
-    - name: Pub get
-      run: flutter pub get
-      
     - name: Build iOS (with codesign for AltStore)
       run: |
-        flutter clean
         flutter build ios --release --dart-define=FLUTTER_BUILD_NUMBER=${{ github.run_number }}
       env:
         DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
